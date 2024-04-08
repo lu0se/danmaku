@@ -127,6 +127,7 @@ version = "1.2.1"
 dependencies = [
  "anyhow",
  "hex",
+ "lazy_static",
  "md-5",
  "reqwest",
  "serde",

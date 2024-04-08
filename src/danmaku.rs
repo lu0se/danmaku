@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use hex::encode;
+use lazy_static::lazy_static;
 use md5::{Digest, Md5};
 use reqwest::Client;
 use serde::Deserialize;
@@ -46,6 +47,10 @@ struct Comment {
     m: String,
 }
 
+lazy_static! {
+    static ref CLIENT: Client = Client::new();
+}
+
 pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
     let file = File::open(&path)?;
     let mut hasher = Md5::new();
@@ -54,8 +59,7 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
     let hash = encode(hasher.finalize());
     let file_name = path.as_ref().file_name().unwrap().to_str().unwrap();
 
-    let client = Client::new();
-    let data = client
+    let data = CLIENT
         .post("https://api.dandanplay.net/api/v2/match")
         .header("Content-Type", "application/json")
         .json(&HashMap::from([
@@ -72,7 +76,7 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
         return Err(anyhow!("no matching episode"));
     }
 
-    let mut danmaku = client
+    let mut danmaku = CLIENT
         .get(format!(
             "https://api.dandanplay.net/api/v2/comment/{}?withRelated=true",
             data.matches[0].episode_id
