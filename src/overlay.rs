@@ -7,7 +7,7 @@ use std::{
     ptr::{addr_of_mut, null_mut},
 };
 
-pub unsafe fn osd_overlay(data: &str, width: i64, height: i64) {
+pub fn osd_overlay(data: &str, width: i64, height: i64) {
     let mut keys = ["name", "id", "format", "data", "res_x", "res_y"]
         .map(|key| CString::new(key).unwrap().into_raw());
     let value1 = CString::new("osd-overlay").unwrap().into_raw();
@@ -52,18 +52,20 @@ pub unsafe fn osd_overlay(data: &str, width: i64, height: i64) {
             list: addr_of_mut!(list),
         },
     };
-    let error = mpv_command_node(CTX, addr_of_mut!(args), null_mut());
+    let error = unsafe { mpv_command_node(CTX, addr_of_mut!(args), null_mut()) };
     if error < 0 {
         log_code(error);
     }
 
-    _ = keys.map(|key| CString::from_raw(key));
-    _ = CString::from_raw(value1);
-    _ = CString::from_raw(value3);
-    _ = CString::from_raw(value4);
+    unsafe {
+        _ = keys.map(|key| CString::from_raw(key));
+        _ = CString::from_raw(value1);
+        _ = CString::from_raw(value3);
+        _ = CString::from_raw(value4);
+    }
 }
 
-pub unsafe fn remove_overlay() {
+pub fn remove_overlay() {
     let mut keys =
         ["name", "id", "format", "data"].map(|key| CString::new(key).unwrap().into_raw());
     let value1 = CString::new("osd-overlay").unwrap().into_raw();
@@ -100,13 +102,15 @@ pub unsafe fn remove_overlay() {
             list: addr_of_mut!(list),
         },
     };
-    let error = mpv_command_node(CTX, addr_of_mut!(args), null_mut());
+    let error = unsafe { mpv_command_node(CTX, addr_of_mut!(args), null_mut()) };
     if error < 0 {
         log_code(error);
     }
 
-    _ = keys.map(|key| CString::from_raw(key));
-    _ = CString::from_raw(value1);
-    _ = CString::from_raw(value3);
-    _ = CString::from_raw(value4);
+    unsafe {
+        _ = keys.map(|key| CString::from_raw(key));
+        _ = CString::from_raw(value1);
+        _ = CString::from_raw(value3);
+        _ = CString::from_raw(value4);
+    }
 }

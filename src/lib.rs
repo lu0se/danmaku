@@ -39,17 +39,19 @@ pub static mut CLIENT_NAME: &str = "";
 pub static mut FONT_SIZE: f64 = 40.;
 
 #[no_mangle]
-unsafe extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
-    CTX = ctx;
-    CLIENT_NAME = CStr::from_ptr(mpv_client_name(ctx)).to_str().unwrap();
+extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
+    unsafe {
+        CTX = ctx;
+        CLIENT_NAME = CStr::from_ptr(mpv_client_name(ctx)).to_str().unwrap();
+    }
     read_options()
-        .map_err(|e| log_error(e))
+        .map_err(log_error)
         .ok()
         .flatten()
         .unwrap_or_default()
         .get("font_size")
         .and_then(|s| s.parse().ok().filter(|&s| s > 0.))
-        .inspect(|&s| FONT_SIZE = s);
+        .inspect(|&s| unsafe { FONT_SIZE = s });
 
     Builder::new_multi_thread()
         .enable_all()
@@ -58,8 +60,9 @@ unsafe extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         .block_on(main(ctx))
 }
 
-async unsafe fn main(ctx: *mut mpv_handle) -> c_int {
-    let error = mpv_observe_property(ctx, 0, c"pause".as_ptr(), mpv_format::MPV_FORMAT_NONE);
+async fn main(ctx: *mut mpv_handle) -> c_int {
+    let error =
+        unsafe { mpv_observe_property(ctx, 0, c"pause".as_ptr(), mpv_format::MPV_FORMAT_NONE) };
     if error < 0 {
         log_code(error);
         return -1;
@@ -76,7 +79,7 @@ async unsafe fn main(ctx: *mut mpv_handle) -> c_int {
         } else {
             -1.
         };
-        let event = &*mpv_wait_event(ctx, timeout);
+        let event = unsafe { &*mpv_wait_event(ctx, timeout) };
         match event.event_id {
             mpv_event_id::MPV_EVENT_SHUTDOWN => {
                 handle.abort();
@@ -98,10 +101,10 @@ async unsafe fn main(ctx: *mut mpv_handle) -> c_int {
                 }
             }
             mpv_event_id::MPV_EVENT_CLIENT_MESSAGE => {
-                let data = &*(event.data as *mut mpv_event_client_message);
-                if !from_raw_parts(data.args, data.num_args.try_into().unwrap())
+                let data = unsafe { &*(event.data as *mut mpv_event_client_message) };
+                if !unsafe { from_raw_parts(data.args, data.num_args.try_into().unwrap()) }
                     .first()
-                    .map(|&arg| CStr::from_ptr(arg) == c"toggle-danmaku")
+                    .map(|&arg| unsafe { CStr::from_ptr(arg) } == c"toggle-danmaku")
                     .unwrap_or_default()
                 {
                     continue;
@@ -134,14 +137,15 @@ async unsafe fn main(ctx: *mut mpv_handle) -> c_int {
     }
 }
 
-unsafe fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
+fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
+    let font_size = unsafe { FONT_SIZE };
     let width = get_property_f64(c"osd-width").filter(|&w| w > 0.)?;
     let height = get_property_f64(c"osd-height").filter(|&h| h > 0.)?;
     let pos = get_property_f64(c"time-pos")?;
     let speed = get_property_f64(c"speed")?;
-    let spacing = FONT_SIZE / 10.;
+    let spacing = font_size / 10.;
     let mut ends = Vec::new();
-    ends.resize(max((height / (FONT_SIZE + spacing)) as usize, 1), None);
+    ends.resize(max((height / (font_size + spacing)) as usize, 1), None);
 
     let mut danmaku = Vec::new();
     for comment in comments {
@@ -152,7 +156,7 @@ unsafe fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
         let x = comment
             .x
             .get_or_insert_with(|| width - (pos - comment.time) * width / DURATION);
-        if *x + comment.count as f64 * FONT_SIZE + spacing < 0. {
+        if *x + comment.count as f64 * font_size + spacing < 0. {
             continue;
         }
         let row = *comment.row.get_or_insert_with(|| {
@@ -171,17 +175,17 @@ unsafe fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
         danmaku.push(format!(
             "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H30\\fs{}\\bord1.5\\b1\\q2}}{}",
             *x,
-            row as f64 * (FONT_SIZE + spacing),
+            row as f64 * (font_size + spacing),
             comment.b,
             comment.g,
             comment.r,
-            FONT_SIZE,
+            font_size,
             comment.message
         ));
 
         *x -= width / DURATION * speed * INTERVAL;
         if let Some(end) = ends.get_mut(row) {
-            let new_end = *x + comment.count as f64 * FONT_SIZE + spacing;
+            let new_end = *x + comment.count as f64 * font_size + spacing;
             match end {
                 Some(end) => *end = end.max(new_end),
                 None => *end = Some(new_end),
@@ -192,7 +196,7 @@ unsafe fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
     Some(())
 }
 
-async unsafe fn get(comments: Arc<Mutex<Option<Vec<Danmaku>>>>, enabled: Arc<AtomicBool>) {
+async fn get(comments: Arc<Mutex<Option<Vec<Danmaku>>>>, enabled: Arc<AtomicBool>) {
     let Some(path) = get_property_string(c"path") else {
         return;
     };
@@ -222,7 +226,7 @@ fn reset(comments: &mut Vec<Danmaku>) {
     }
 }
 
-unsafe fn loaded(n: usize) {
+fn loaded(n: usize) {
     osd_message(&format!(
         "Loaded {} danmaku comment{}",
         n,
@@ -230,10 +234,10 @@ unsafe fn loaded(n: usize) {
     ));
 }
 
-unsafe fn osd_message(text: &str) {
+fn osd_message(text: &str) {
     let arg2 = CString::new(text).unwrap();
     let mut args = [c"show-text".as_ptr(), arg2.as_ptr(), null()];
-    let error = mpv_command(CTX, args.as_mut_ptr());
+    let error = unsafe { mpv_command(CTX, args.as_mut_ptr()) };
     if error < 0 {
         log_code(error);
     }
