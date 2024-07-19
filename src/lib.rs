@@ -37,6 +37,7 @@ const INTERVAL: f64 = 0.005;
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
 pub static mut FONT_SIZE: f64 = 40.;
+pub static mut TRANSPARENCY: u8 = 0x30;
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -44,14 +45,19 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         CTX = ctx;
         CLIENT_NAME = CStr::from_ptr(mpv_client_name(ctx)).to_str().unwrap();
     }
-    read_options()
+    let options = read_options()
         .map_err(log_error)
         .ok()
         .flatten()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    options
         .get("font_size")
         .and_then(|s| s.parse().ok().filter(|&s| s > 0.))
         .inspect(|&s| unsafe { FONT_SIZE = s });
+    options
+        .get("transparency")
+        .and_then(|t| t.parse().ok())
+        .inspect(|&t| unsafe { TRANSPARENCY = t });
 
     Builder::new_multi_thread()
         .enable_all()
@@ -139,6 +145,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
 
 fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
     let font_size = unsafe { FONT_SIZE };
+    let transparency = unsafe { TRANSPARENCY };
     let width = get_property_f64(c"osd-width").filter(|&w| w > 0.)?;
     let height = get_property_f64(c"osd-height").filter(|&h| h > 0.)?;
     let pos = get_property_f64(c"time-pos")?;
@@ -173,12 +180,13 @@ fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
                 })
         });
         danmaku.push(format!(
-            "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H30\\fs{}\\bord1.5\\b1\\q2}}{}",
+            "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H{:x}\\fs{}\\bord1.5\\b1\\q2}}{}",
             *x,
             row as f64 * (font_size + spacing),
             comment.b,
             comment.g,
             comment.r,
+            transparency,
             font_size,
             comment.message
         ));
