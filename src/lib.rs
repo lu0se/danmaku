@@ -38,6 +38,7 @@ pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
 pub static mut FONT_SIZE: f64 = 40.;
 pub static mut TRANSPARENCY: u8 = 0x30;
+pub static mut RESERVED_SPACE: f64 = 0.;
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -58,6 +59,10 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         .get("transparency")
         .and_then(|t| t.parse().ok())
         .inspect(|&t| unsafe { TRANSPARENCY = t });
+    options
+        .get("reserved_space")
+        .and_then(|r| r.parse().ok().filter(|r| (0. ..1.).contains(r)))
+        .inspect(|&r| unsafe { RESERVED_SPACE = r });
 
     Builder::new_multi_thread()
         .enable_all()
@@ -146,13 +151,20 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
 fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
     let font_size = unsafe { FONT_SIZE };
     let transparency = unsafe { TRANSPARENCY };
+    let reserved_space = unsafe { RESERVED_SPACE };
     let width = 1920.;
     let height = 1080.;
     let pos = get_property_f64(c"time-pos")?;
     let speed = get_property_f64(c"speed")?;
     let spacing = font_size / 10.;
     let mut ends = Vec::new();
-    ends.resize(max((height / (font_size + spacing)) as usize, 1), None);
+    ends.resize(
+        max(
+            (height * (1. - reserved_space) / (font_size + spacing)) as usize,
+            1,
+        ),
+        None,
+    );
 
     let mut danmaku = Vec::new();
     for comment in comments {
