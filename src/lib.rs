@@ -36,7 +36,7 @@ const INTERVAL: f64 = 0.005;
 
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
-pub static mut FONT_SIZE: f64 = 34.;
+pub static mut FONT_SIZE: f64 = 40.;
 pub static mut TRANSPARENCY: u8 = 0x30;
 
 #[no_mangle]
@@ -144,10 +144,10 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
 }
 
 fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
-    let font_size = unsafe { FONT_SIZE } * get_property_f64(c"display-hidpi-scale").unwrap_or(1.);
+    let font_size = unsafe { FONT_SIZE };
     let transparency = unsafe { TRANSPARENCY };
-    let width = get_property_f64(c"osd-width").filter(|&w| w > 0.)?;
-    let height = get_property_f64(c"osd-height").filter(|&h| h > 0.)?;
+    let width = 1920.;
+    let height = 1080.;
     let pos = get_property_f64(c"time-pos")?;
     let speed = get_property_f64(c"speed")?;
     let spacing = font_size / 10.;

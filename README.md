@@ -22,5 +22,5 @@ It may take some time to load the danmaku after first enabling it.
 
 Set the following options in `script-opts/danmaku.conf` to configure the plugin:
 
-- `font_size=34`: danmaku font size.
+- `font_size=40`: danmaku font size.
 - `transparency=48`: 0 (opaque) to 255 (fully transparent).
