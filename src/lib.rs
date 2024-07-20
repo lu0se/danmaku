@@ -180,7 +180,7 @@ fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
                 })
         });
         danmaku.push(format!(
-            "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H{:x}\\fs{}\\bord1.5\\b1\\q2}}{}",
+            "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H{:x}\\fs{}\\bord1.5\\shad0\\b1\\q2}}{}",
             *x,
             row as f64 * (font_size + spacing),
             comment.b,
