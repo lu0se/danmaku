@@ -152,8 +152,14 @@ fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
     let font_size = unsafe { FONT_SIZE };
     let transparency = unsafe { TRANSPARENCY };
     let reserved_space = unsafe { RESERVED_SPACE };
-    let width = 1920.;
-    let height = 1080.;
+    let mut width = 1920.;
+    let mut height = 1080.;
+    let ratio = get_property_f64(c"osd-width")? / get_property_f64(c"osd-height")?;
+    if ratio > width / height {
+        height = width / ratio;
+    } else if ratio < width / height {
+        width = height * ratio;
+    }
     let pos = get_property_f64(c"time-pos")?;
     let speed = get_property_f64(c"speed")?;
     let spacing = font_size / 10.;
