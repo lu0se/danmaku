@@ -18,6 +18,7 @@ use crate::{
     overlay::{osd_overlay, remove_overlay},
     property::{get_property_bool, get_property_f64, get_property_string},
 };
+use anyhow::anyhow;
 use std::{
     cmp::max,
     ffi::{CStr, CString},
@@ -36,9 +37,11 @@ const INTERVAL: f64 = 0.005;
 
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
-pub static mut FONT_SIZE: f64 = 40.;
-pub static mut TRANSPARENCY: u8 = 0x30;
-pub static mut RESERVED_SPACE: f64 = 0.;
+
+static mut FONT_SIZE: f64 = 40.;
+static mut TRANSPARENCY: u8 = 0x30;
+static mut RESERVED_SPACE: f64 = 0.;
+static mut DELAY: f64 = 0.;
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -99,6 +102,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             mpv_event_id::MPV_EVENT_FILE_LOADED => {
                 handle.abort();
                 *comments.lock().await = None;
+                unsafe { DELAY = 0. };
                 if enabled.load(Ordering::SeqCst) {
                     remove_overlay();
                     handle = spawn(get(comments.clone(), enabled.clone()));
@@ -113,28 +117,54 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             }
             mpv_event_id::MPV_EVENT_CLIENT_MESSAGE => {
                 let data = unsafe { &*(event.data as *mut mpv_event_client_message) };
-                if !unsafe { from_raw_parts(data.args, data.num_args.try_into().unwrap()) }
-                    .first()
-                    .map(|&arg| unsafe { CStr::from_ptr(arg) } == c"toggle-danmaku")
-                    .unwrap_or_default()
-                {
-                    continue;
-                }
-                if enabled.fetch_xor(true, Ordering::SeqCst) {
-                    remove_overlay();
-                    osd_message("Danmaku: off");
-                } else {
-                    match &mut *comments.lock().await {
-                        Some(comments) => {
-                            reset(comments);
-                            loaded(comments.len());
-                        }
-                        None => {
-                            osd_message("Danmaku: on");
-                            handle.abort();
-                            handle = spawn(get(comments.clone(), enabled.clone()));
+                let args = unsafe { from_raw_parts(data.args, data.num_args.try_into().unwrap()) };
+                match args {
+                    [arg1, args @ ..] => {
+                        let arg1 = unsafe { CStr::from_ptr(*arg1) };
+                        if arg1 == c"toggle-danmaku" {
+                            if enabled.fetch_xor(true, Ordering::SeqCst) {
+                                remove_overlay();
+                                osd_message("Danmaku: off");
+                            } else {
+                                match &mut *comments.lock().await {
+                                    Some(comments) => {
+                                        reset(comments);
+                                        loaded(comments.len());
+                                    }
+                                    None => {
+                                        osd_message("Danmaku: on");
+                                        handle.abort();
+                                        handle = spawn(get(comments.clone(), enabled.clone()));
+                                    }
+                                }
+                            }
+                        } else if arg1 == c"danmaku-delay" {
+                            match args.first().map(|&arg| unsafe { CStr::from_ptr(arg) }) {
+                                Some(seconds) => {
+                                    match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok())
+                                    {
+                                        Some(seconds) => {
+                                            unsafe { DELAY += seconds };
+                                            if let Some(comments) = &mut *comments.lock().await {
+                                                reset(comments);
+                                            }
+                                            osd_message(&format!(
+                                                "Danmaku delay: {:.2} ms",
+                                                unsafe { DELAY } * 1000.
+                                            ));
+                                        }
+                                        None => log_error(anyhow!(
+                                            "command danmaku-delay: invalid time"
+                                        )),
+                                    }
+                                }
+                                None => log_error(anyhow!(
+                                    "command danmaku-delay: required argument seconds not set"
+                                )),
+                            }
                         }
                     }
+                    _ => continue,
                 }
             }
             _ => (),
@@ -152,6 +182,8 @@ fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
     let font_size = unsafe { FONT_SIZE };
     let transparency = unsafe { TRANSPARENCY };
     let reserved_space = unsafe { RESERVED_SPACE };
+    let delay = unsafe { DELAY };
+
     let mut width = 1920.;
     let mut height = 1080.;
     let ratio = get_property_f64(c"osd-width")? / get_property_f64(c"osd-height")?;
@@ -174,13 +206,14 @@ fn render(comments: &mut Vec<Danmaku>) -> Option<()> {
 
     let mut danmaku = Vec::new();
     for comment in comments {
-        if comment.time > pos + DURATION / 2. {
+        let time = comment.time + delay;
+        if time > pos + DURATION / 2. {
             break;
         }
 
         let x = comment
             .x
-            .get_or_insert_with(|| width - (pos - comment.time) * width / DURATION);
+            .get_or_insert_with(|| width - (pos - time) * width / DURATION);
         if *x + comment.count as f64 * font_size + spacing < 0. {
             continue;
         }

@@ -25,3 +25,8 @@ Set the following options in `script-opts/danmaku.conf` to configure the plugin:
 - `font_size=40`: danmaku font size.
 - `transparency=48`: 0 (opaque) to 255 (fully transparent).
 - `reserved_space=0`: the proportion of reserved space at the bottom of the screen, 0.0 to 1.0 (excluded).
+
+Available script messages:
+
+- `toggle-danmaku`: toggles the danmaku visibility.
+- `danmaku-delay <seconds>`: delays danmaku by &lt;seconds&gt; seconds, can be negative.
