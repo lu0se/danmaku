@@ -115,56 +115,56 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     }
                 }
             }
-            mpv_event_id::MPV_EVENT_CLIENT_MESSAGE => {
+            mpv_event_id::MPV_EVENT_CLIENT_MESSAGE => 'a: {
                 let data = unsafe { &*(event.data as *mut mpv_event_client_message) };
-                let args = unsafe { from_raw_parts(data.args, data.num_args.try_into().unwrap()) };
-                match args {
-                    [arg1, args @ ..] => {
-                        let arg1 = unsafe { CStr::from_ptr(*arg1) };
-                        if arg1 == c"toggle-danmaku" {
-                            if enabled.fetch_xor(true, Ordering::SeqCst) {
-                                remove_overlay();
-                                osd_message("Danmaku: off");
-                            } else {
-                                match &mut *comments.lock().await {
-                                    Some(comments) => {
-                                        reset(comments);
-                                        loaded(comments.len());
-                                    }
-                                    None => {
-                                        osd_message("Danmaku: on");
-                                        handle.abort();
-                                        handle = spawn(get(comments.clone(), enabled.clone()));
-                                    }
+                if data.args.is_null() {
+                    break 'a;
+                }
+                if let [arg1, args @ ..] =
+                    unsafe { from_raw_parts(data.args, data.num_args.try_into().unwrap()) }
+                {
+                    let arg1 = unsafe { CStr::from_ptr(*arg1) };
+                    if arg1 == c"toggle-danmaku" {
+                        if enabled.fetch_xor(true, Ordering::SeqCst) {
+                            remove_overlay();
+                            osd_message("Danmaku: off");
+                        } else {
+                            match &mut *comments.lock().await {
+                                Some(comments) => {
+                                    reset(comments);
+                                    loaded(comments.len());
                                 }
-                            }
-                        } else if arg1 == c"danmaku-delay" {
-                            match args.first().map(|&arg| unsafe { CStr::from_ptr(arg) }) {
-                                Some(seconds) => {
-                                    match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok())
-                                    {
-                                        Some(seconds) => {
-                                            unsafe { DELAY += seconds };
-                                            if let Some(comments) = &mut *comments.lock().await {
-                                                reset(comments);
-                                            }
-                                            osd_message(&format!(
-                                                "Danmaku delay: {:.2} ms",
-                                                unsafe { DELAY } * 1000.
-                                            ));
-                                        }
-                                        None => log_error(anyhow!(
-                                            "command danmaku-delay: invalid time"
-                                        )),
-                                    }
+                                None => {
+                                    osd_message("Danmaku: on");
+                                    handle.abort();
+                                    handle = spawn(get(comments.clone(), enabled.clone()));
                                 }
-                                None => log_error(anyhow!(
-                                    "command danmaku-delay: required argument seconds not set"
-                                )),
                             }
                         }
+                    } else if arg1 == c"danmaku-delay" {
+                        match args.first().map(|&arg| unsafe { CStr::from_ptr(arg) }) {
+                            Some(seconds) => {
+                                match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok()) {
+                                    Some(seconds) => {
+                                        unsafe { DELAY += seconds };
+                                        if let Some(comments) = &mut *comments.lock().await {
+                                            reset(comments);
+                                        }
+                                        osd_message(&format!(
+                                            "Danmaku delay: {:.2} ms",
+                                            unsafe { DELAY } * 1000.
+                                        ));
+                                    }
+                                    None => {
+                                        log_error(anyhow!("command danmaku-delay: invalid time"))
+                                    }
+                                }
+                            }
+                            None => log_error(anyhow!(
+                                "command danmaku-delay: required argument seconds not set"
+                            )),
+                        }
                     }
-                    _ => continue,
                 }
             }
             _ => (),
