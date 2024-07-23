@@ -151,7 +151,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                             reset(comments);
                                         }
                                         osd_message(&format!(
-                                            "Danmaku delay: {:.2} ms",
+                                            "Danmaku delay: {:.0} ms",
                                             unsafe { DELAY } * 1000.
                                         ));
                                     }
