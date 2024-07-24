@@ -1,3 +1,4 @@
+use crate::FILTER;
 use anyhow::{anyhow, Result};
 use hex::encode;
 use lazy_static::lazy_static;
@@ -87,6 +88,7 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
         .await?
         .comments
         .into_iter()
+        .filter(|comment| unsafe { FILTER.iter().all(|pat| !comment.m.contains(pat)) })
         .map(|comment| {
             let mut p = comment.p.splitn(4, ',');
             let t = p.next().unwrap().parse().unwrap();

@@ -25,6 +25,7 @@ Set the following options in `script-opts/danmaku.conf` to configure the plugin:
 - `font_size=40`: danmaku font size.
 - `transparency=48`: 0 (opaque) to 255 (fully transparent).
 - `reserved_space=0`: the proportion of reserved space at the bottom of the screen, 0.0 to 1.0 (excluded).
+- `filter=keyword1,keyword2`: comma separated keywords, danmaku that contains any of them will be blocked.
 
 Available script messages:
 

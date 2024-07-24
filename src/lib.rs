@@ -37,6 +37,7 @@ const INTERVAL: f64 = 0.005;
 
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
+pub static mut FILTER: Vec<String> = Vec::new();
 
 static mut FONT_SIZE: f64 = 40.;
 static mut TRANSPARENCY: u8 = 0x30;
@@ -66,6 +67,13 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         .get("reserved_space")
         .and_then(|r| r.parse().ok().filter(|r| (0. ..1.).contains(r)))
         .inspect(|&r| unsafe { RESERVED_SPACE = r });
+    if let Some(filter) = options
+        .get("filter")
+        .map(|f| f.trim())
+        .filter(|f| !f.is_empty())
+    {
+        unsafe { FILTER = filter.split(',').map(Into::into).collect() };
+    }
 
     Builder::new_multi_thread()
         .enable_all()
