@@ -1,10 +1,18 @@
+#![allow(clippy::uninit_assumed_init)]
+#![allow(invalid_value)]
+
 use crate::{
-    ffi::{mpv_command_node, mpv_format, mpv_node, mpv_node_list, u},
+    ffi::{
+        mpv_command, mpv_command_node, mpv_command_ret, mpv_error_string, mpv_format, mpv_free,
+        mpv_free_node_contents, mpv_get_property, mpv_node, mpv_node_list, u,
+    },
     log_code, CTX,
 };
+use anyhow::{anyhow, Result};
 use std::{
-    ffi::CString,
-    ptr::{addr_of_mut, null_mut},
+    ffi::{c_char, c_int, CStr, CString},
+    mem::MaybeUninit,
+    ptr::{addr_of_mut, null, null_mut},
 };
 
 pub fn osd_overlay(data: &str, width: i64, height: i64) {
@@ -112,5 +120,95 @@ pub fn remove_overlay() {
         _ = CString::from_raw(value1);
         _ = CString::from_raw(value3);
         _ = CString::from_raw(value4);
+    }
+}
+
+pub fn get_property_f64(name: &CStr) -> Option<f64> {
+    let mut data = unsafe { MaybeUninit::<f64>::uninit().assume_init() };
+    let error = unsafe {
+        mpv_get_property(
+            CTX,
+            name.as_ptr(),
+            mpv_format::MPV_FORMAT_DOUBLE,
+            addr_of_mut!(data).cast(),
+        )
+    };
+    if error < 0 {
+        log_code(error);
+        None
+    } else {
+        Some(data)
+    }
+}
+
+pub fn get_property_bool(name: &CStr) -> Option<bool> {
+    let mut data = unsafe { MaybeUninit::<c_int>::uninit().assume_init() };
+    let error = unsafe {
+        mpv_get_property(
+            CTX,
+            name.as_ptr(),
+            mpv_format::MPV_FORMAT_FLAG,
+            addr_of_mut!(data).cast(),
+        )
+    };
+    if error < 0 {
+        log_code(error);
+        None
+    } else {
+        Some(data != 0)
+    }
+}
+
+pub fn get_property_string(name: &CStr) -> Option<String> {
+    let mut data = unsafe { MaybeUninit::<*mut c_char>::uninit().assume_init() };
+    let error = unsafe {
+        mpv_get_property(
+            CTX,
+            name.as_ptr(),
+            mpv_format::MPV_FORMAT_STRING,
+            addr_of_mut!(data).cast(),
+        )
+    };
+    if error < 0 {
+        log_code(error);
+        None
+    } else {
+        let value = unsafe { CStr::from_ptr(data) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { mpv_free(data.cast()) };
+        Some(value)
+    }
+}
+
+pub fn expand_path(path: &str) -> Result<String> {
+    unsafe {
+        let arg2 = CString::new(path).unwrap();
+        let mut args = [c"expand-path".as_ptr(), arg2.as_ptr(), null()];
+        let mut result = MaybeUninit::<mpv_node>::uninit().assume_init();
+        let error = mpv_command_ret(CTX, args.as_mut_ptr(), addr_of_mut!(result));
+        if error < 0 {
+            return Err(anyhow!(
+                "{}",
+                CStr::from_ptr(mpv_error_string(error)).to_str().unwrap()
+            ));
+        }
+        assert_eq!(result.format, mpv_format::MPV_FORMAT_STRING);
+        let path = CStr::from_ptr(result.u.string)
+            .to_str()
+            .unwrap()
+            .to_string();
+        mpv_free_node_contents(addr_of_mut!(result));
+        Ok(path)
+    }
+}
+
+pub fn osd_message(text: &str) {
+    let arg2 = CString::new(text).unwrap();
+    let mut args = [c"show-text".as_ptr(), arg2.as_ptr(), null()];
+    let error = unsafe { mpv_command(CTX, args.as_mut_ptr()) };
+    if error < 0 {
+        log_code(error);
     }
 }

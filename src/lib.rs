@@ -4,26 +4,30 @@ pub mod danmaku;
 pub mod ffi;
 pub mod log;
 pub mod options;
-pub mod overlay;
-pub mod property;
+pub mod utils;
 
 use crate::{
     danmaku::{get_danmaku, Danmaku},
     ffi::{
-        mpv_client_name, mpv_command, mpv_event_client_message, mpv_event_id, mpv_format,
-        mpv_handle, mpv_observe_property, mpv_wait_event,
+        mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_format, mpv_handle,
+        mpv_observe_property, mpv_wait_event,
     },
     log::{log_code, log_error},
     options::read_options,
-    overlay::{osd_overlay, remove_overlay},
-    property::{get_property_bool, get_property_f64, get_property_string},
+    utils::{
+        expand_path, get_property_bool, get_property_f64, get_property_string, osd_message,
+        osd_overlay, remove_overlay,
+    },
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
+use serde::Deserialize;
 use std::{
     cmp::max,
-    ffi::{CStr, CString},
+    ffi::CStr,
+    fs::File,
+    io::BufReader,
     os::raw::c_int,
-    ptr::{null, null_mut},
+    ptr::null_mut,
     slice::from_raw_parts,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -43,6 +47,13 @@ static mut FONT_SIZE: f64 = 40.;
 static mut TRANSPARENCY: u8 = 0x30;
 static mut RESERVED_SPACE: f64 = 0.;
 static mut DELAY: f64 = 0.;
+
+#[derive(Deserialize)]
+struct BilibiliFilterRule {
+    r#type: usize,
+    filter: String,
+    opened: bool,
+}
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -73,6 +84,26 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         .filter(|f| !f.is_empty())
     {
         unsafe { FILTER = filter.split(',').map(Into::into).collect() };
+    }
+    if let Some(file) = options
+        .get("filter_bilibili")
+        .and_then(|f| expand_path(f).map_err(log_error).ok())
+    {
+        match (|| -> Result<_> {
+            Ok(serde_json::from_reader::<_, Vec<BilibiliFilterRule>>(
+                BufReader::new(File::open(file)?),
+            )?)
+        })() {
+            Ok(rules) => unsafe {
+                FILTER.extend(
+                    rules
+                        .into_iter()
+                        .filter(|r| r.r#type == 0 && r.opened)
+                        .map(|r| r.filter),
+                );
+            },
+            Err(error) => log_error(anyhow!("option filter_bilibili: {}", error)),
+        }
     }
 
     Builder::new_multi_thread()
@@ -299,13 +330,4 @@ fn loaded(n: usize) {
         n,
         if n > 1 { "s" } else { "" }
     ));
-}
-
-fn osd_message(text: &str) {
-    let arg2 = CString::new(text).unwrap();
-    let mut args = [c"show-text".as_ptr(), arg2.as_ptr(), null()];
-    let error = unsafe { mpv_command(CTX, args.as_mut_ptr()) };
-    if error < 0 {
-        log_code(error);
-    }
 }

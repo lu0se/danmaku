@@ -131,6 +131,7 @@ dependencies = [
  "md-5",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
  "unicode-segmentation",
 ]
