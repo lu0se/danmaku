@@ -16,10 +16,10 @@ use std::{
 };
 
 pub fn osd_overlay(data: &str, width: i64, height: i64) {
-    let mut keys = ["name", "id", "format", "data", "res_x", "res_y"]
-        .map(|key| CString::new(key).unwrap().into_raw());
-    let value1 = CString::new("osd-overlay").unwrap().into_raw();
-    let value3 = CString::new("ass-events").unwrap().into_raw();
+    let mut keys = [c"name", c"id", c"format", c"data", c"res_x", c"res_y"]
+        .map(|key| CString::from(key).into_raw());
+    let value1 = CString::from(c"osd-overlay").into_raw();
+    let value3 = CString::from(c"ass-events").into_raw();
     let value4 = CString::new(data).unwrap().into_raw();
     let mut values = [
         mpv_node {
@@ -74,11 +74,10 @@ pub fn osd_overlay(data: &str, width: i64, height: i64) {
 }
 
 pub fn remove_overlay() {
-    let mut keys =
-        ["name", "id", "format", "data"].map(|key| CString::new(key).unwrap().into_raw());
-    let value1 = CString::new("osd-overlay").unwrap().into_raw();
-    let value3 = CString::new("none").unwrap().into_raw();
-    let value4 = CString::new("").unwrap().into_raw();
+    let mut keys = [c"name", c"id", c"format", c"data"].map(|key| CString::from(key).into_raw());
+    let value1 = CString::from(c"osd-overlay").into_raw();
+    let value3 = CString::from(c"none").into_raw();
+    let value4 = CString::from(c"").into_raw();
     let mut values = [
         mpv_node {
             format: mpv_format::MPV_FORMAT_STRING,
