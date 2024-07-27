@@ -1,4 +1,4 @@
-use crate::{utils::expand_path, CLIENT_NAME};
+use crate::{mpv::expand_path, CLIENT_NAME};
 use anyhow::Result;
 use std::{
     collections::HashMap,
@@ -6,8 +6,6 @@ use std::{
     io::{BufRead, BufReader, ErrorKind},
 };
 
-#[allow(clippy::uninit_assumed_init)]
-#[allow(invalid_value)]
 pub fn read_options() -> Result<Option<HashMap<String, String>>> {
     let path = format!("~~/script-opts/{}.conf", unsafe { CLIENT_NAME });
     let file = match File::open(expand_path(&path)?) {

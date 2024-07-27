@@ -1,10 +1,8 @@
-#![allow(clippy::missing_safety_doc)]
-
 pub mod danmaku;
 pub mod ffi;
 pub mod log;
+pub mod mpv;
 pub mod options;
-pub mod utils;
 
 use crate::{
     danmaku::{get_danmaku, Danmaku},
@@ -13,11 +11,11 @@ use crate::{
         mpv_observe_property, mpv_wait_event,
     },
     log::{log_code, log_error},
-    options::read_options,
-    utils::{
+    mpv::{
         expand_path, get_property_bool, get_property_f64, get_property_string, osd_message,
         osd_overlay, remove_overlay,
     },
+    options::read_options,
 };
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -61,6 +59,7 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         CTX = ctx;
         CLIENT_NAME = CStr::from_ptr(mpv_client_name(ctx)).to_str().unwrap();
     }
+
     let options = read_options()
         .map_err(log_error)
         .ok()
