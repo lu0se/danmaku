@@ -1,0 +1,57 @@
+name: "Build danmaku"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - ci
+    paths-ignore:
+      - '*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'
+
+jobs:
+  windows:
+    name: "Build danmaku on Windows"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+            components: rustfmt
+      - name: Build
+        shell: cmd
+        run: |
+          cargo build --release
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: "danmaku-release-win64"
+          path: target/release/danmaku.dll
+  linux:
+    name: "Build danmaku on Linux"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+            components: rustfmt
+      - name: Build
+        run: |
+          cargo build --release
+          mv target/release/libdanmaku.so target/release/danmaku.so
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: "danmaku-release-linux"
+          path: target/release/danmaku.so
