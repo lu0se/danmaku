@@ -214,6 +214,8 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                             for comment in comments {
                                                 comment.blocked =
                                                     filter.sources.contains(&comment.source);
+                                                comment.x = None;
+                                                comment.row = None;
                                             }
                                         }
                                         osd_message(&format!(
@@ -230,6 +232,8 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                         if let Some(comments) = &mut *comments.lock().await {
                                             for comment in comments {
                                                 comment.blocked = sources.contains(&comment.source);
+                                                comment.x = None;
+                                                comment.row = None;
                                             }
                                         }
                                         osd_message(&format!(
