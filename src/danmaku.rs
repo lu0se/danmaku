@@ -55,6 +55,8 @@ pub enum Source {
     Bilibili,
     Gamer,
     AcFun,
+    Tencent,
+    IQIYI,
     D,
     Dandan,
     Unknown,
@@ -62,12 +64,14 @@ pub enum Source {
 
 impl From<&str> for Source {
     fn from(value: &str) -> Self {
-        match value {
-            "Bilibili" => Source::Bilibili,
-            "Gamer" => Source::Gamer,
-            "AcFun" => Source::AcFun,
-            "D" => Source::D,
-            "Dandan" => Source::Dandan,
+        match value.to_ascii_lowercase().as_str() {
+            "bilibili" => Source::Bilibili,
+            "gamer" => Source::Gamer,
+            "acfun" => Source::AcFun,
+            "qq" => Source::Tencent,
+            "iqiyi" => Source::IQIYI,
+            "d" => Source::D,
+            "dandan" => Source::Dandan,
             _ => Source::Unknown,
         }
     }
