@@ -1,4 +1,4 @@
-use crate::FILTER;
+use crate::Filter;
 use anyhow::{anyhow, Result};
 use hex::encode;
 use lazy_static::lazy_static;
@@ -20,8 +20,10 @@ pub struct Danmaku {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+    pub source: Source,
     pub x: Option<f64>,
     pub row: Option<usize>,
+    pub blocked: bool,
 }
 
 #[derive(Deserialize)]
@@ -48,11 +50,34 @@ struct Comment {
     m: String,
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Source {
+    Bilibili,
+    Gamer,
+    AcFun,
+    D,
+    Dandan,
+    Unknown,
+}
+
+impl From<&str> for Source {
+    fn from(value: &str) -> Self {
+        match value {
+            "Bilibili" => Source::Bilibili,
+            "Gamer" => Source::Gamer,
+            "AcFun" => Source::AcFun,
+            "D" => Source::D,
+            "Dandan" => Source::Dandan,
+            _ => Source::Unknown,
+        }
+    }
+}
+
 lazy_static! {
     static ref CLIENT: Client = Client::new();
 }
 
-pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
+pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Filter) -> Result<Vec<Danmaku>> {
     let file = File::open(&path)?;
     let mut hasher = Md5::new();
     // https://api.dandanplay.net/swagger/ui/index
@@ -77,7 +102,7 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
         return Err(anyhow!("no matching episode"));
     }
 
-    let mut danmaku = CLIENT
+    let danmaku = CLIENT
         .get(format!(
             "https://api.dandanplay.net/api/v2/comment/{}?withRelated=true",
             data.matches[0].episode_id
@@ -86,26 +111,42 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P) -> Result<Vec<Danmaku>> {
         .await?
         .json::<CommentResponse>()
         .await?
-        .comments
+        .comments;
+    let sources_rt = filter.sources_rt.lock().await;
+    let mut danmaku = danmaku
         .into_iter()
-        .filter(|comment| unsafe { FILTER.iter().all(|pat| !comment.m.contains(pat)) })
+        .filter(|comment| filter.keywords.iter().all(|pat| !comment.m.contains(pat)))
         .map(|comment| {
             let mut p = comment.p.splitn(4, ',');
-            let t = p.next().unwrap().parse().unwrap();
+            let time = p.next().unwrap().parse().unwrap();
             _ = p.next().unwrap();
-            let c = p.next().unwrap().parse::<u32>().unwrap();
+            let color = p.next().unwrap().parse::<u32>().unwrap();
+            let user = p.next().unwrap();
+            let source = if user.chars().all(char::is_numeric) {
+                Source::Dandan
+            } else {
+                user.strip_prefix('[')
+                    .and_then(|user| user.split_once(']').map(|(source, _)| source.into()))
+                    .unwrap_or(Source::Unknown)
+            };
             Danmaku {
                 message: comment.m.replace('\n', "\\N"),
                 count: comment.m.graphemes(true).count(),
-                time: t,
-                r: (c / (256 * 256)).try_into().unwrap(),
-                g: (c % (256 * 256) / 256).try_into().unwrap(),
-                b: (c % 256).try_into().unwrap(),
+                time,
+                r: (color / (256 * 256)).try_into().unwrap(),
+                g: (color % (256 * 256) / 256).try_into().unwrap(),
+                b: (color % 256).try_into().unwrap(),
+                source,
                 x: None,
                 row: None,
+                blocked: sources_rt
+                    .as_ref()
+                    .map(|s| s.contains(&source))
+                    .unwrap_or_else(|| filter.sources.contains(&source)),
             }
         })
         .collect::<Vec<_>>();
+
     danmaku.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
     Ok(danmaku)
 }

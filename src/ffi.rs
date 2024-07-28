@@ -120,6 +120,14 @@ pub struct mpv_event_client_message {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct mpv_event_property {
+    pub name: *const c_char,
+    pub format: mpv_format,
+    pub data: *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct mpv_event {
     pub event_id: mpv_event_id,
     pub error: c_int,
