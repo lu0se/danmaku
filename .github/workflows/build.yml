@@ -34,7 +34,7 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: danmaku-release-win64
+          name: danmaku-release-windows
           path: target/release/danmaku.dll
   linux:
     name: Build danmaku on Linux
