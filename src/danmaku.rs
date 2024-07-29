@@ -1,7 +1,6 @@
 use crate::Filter;
 use anyhow::{anyhow, Result};
 use hex::encode;
-use lazy_static::lazy_static;
 use md5::{Digest, Md5};
 use reqwest::Client;
 use serde::Deserialize;
@@ -10,6 +9,7 @@ use std::{
     fs::File,
     io::{copy, Read},
     path::Path,
+    sync::LazyLock,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -77,9 +77,7 @@ impl From<&str> for Source {
     }
 }
 
-lazy_static! {
-    static ref CLIENT: Client = Client::new();
-}
+static CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Filter) -> Result<Vec<Danmaku>> {
     let file = File::open(&path)?;
