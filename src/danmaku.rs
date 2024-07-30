@@ -1,4 +1,4 @@
-use crate::Filter;
+use crate::options::Filter;
 use anyhow::{anyhow, Result};
 use hex::encode;
 use md5::{Digest, Md5};
@@ -9,7 +9,7 @@ use std::{
     fs::File,
     io::{copy, Read},
     path::Path,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -79,7 +79,7 @@ impl From<&str> for Source {
 
 static CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
-pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Filter) -> Result<Vec<Danmaku>> {
+pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Arc<Filter>) -> Result<Vec<Danmaku>> {
     let file = File::open(&path)?;
     let mut hasher = Md5::new();
     // https://api.dandanplay.net/swagger/ui/index

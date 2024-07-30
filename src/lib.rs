@@ -12,26 +12,24 @@ use crate::{
     },
     log::{log_code, log_error},
     mpv::{
-        expand_path, get_property_bool, get_property_f64, get_property_string, osd_message,
-        osd_overlay, remove_overlay,
+        get_property_bool, get_property_f64, get_property_string, osd_message, osd_overlay,
+        remove_overlay,
     },
     options::read_options,
 };
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use ffi::{mpv_event_property, mpv_node};
-use serde::Deserialize;
+use options::{Filter, Options};
 use std::{
     cmp::max,
     collections::HashSet,
     ffi::CStr,
-    fs::File,
-    io::BufReader,
     os::raw::c_int,
     ptr::null_mut,
     slice::from_raw_parts,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 use tokio::{runtime::Builder, spawn, sync::Mutex};
@@ -42,27 +40,8 @@ const INTERVAL: f64 = 0.005;
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
 
-#[derive(Deserialize)]
-struct BilibiliFilterRule {
-    r#type: usize,
-    filter: String,
-    opened: bool,
-}
-
-#[derive(Clone, Copy)]
-struct Options {
-    font_size: f64,
-    transparency: u8,
-    reserved_space: f64,
-    delay: f64,
-}
-
-#[derive(Clone)]
-pub struct Filter {
-    keywords: Arc<Vec<String>>,
-    sources: Arc<HashSet<Source>>,
-    sources_rt: Arc<Mutex<Option<HashSet<Source>>>>,
-}
+static ENABLED: AtomicBool = AtomicBool::new(false);
+static COMMENTS: LazyLock<Mutex<Option<Vec<Danmaku>>>> = LazyLock::new(|| Mutex::new(None));
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -79,68 +58,6 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
 }
 
 async fn main(ctx: *mut mpv_handle) -> c_int {
-    let options = read_options()
-        .map_err(log_error)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-
-    let mut keywords: Vec<_> = options
-        .get("filter")
-        .filter(|f| !f.is_empty())
-        .map(|f| f.split(',').map(Into::into).collect())
-        .unwrap_or_default();
-    if let Some(file) = options
-        .get("filter_bilibili")
-        .and_then(|f| expand_path(f).map_err(log_error).ok())
-    {
-        match (|| -> Result<_> {
-            Ok(serde_json::from_reader::<_, Vec<BilibiliFilterRule>>(
-                BufReader::new(File::open(file)?),
-            )?)
-        })() {
-            Ok(rules) => keywords.extend(
-                rules
-                    .into_iter()
-                    .filter(|r| r.r#type == 0 && r.opened)
-                    .map(|r| r.filter),
-            ),
-            Err(error) => log_error(anyhow!("option filter_bilibili: {}", error)),
-        }
-    }
-    let filter = Filter {
-        keywords: Arc::new(keywords),
-        sources: Arc::new(
-            options
-                .get("filter_source")
-                .filter(|f| !f.is_empty())
-                .map(|f| {
-                    f.split(',')
-                        .map(Into::into)
-                        .filter(|&s| s != Source::Unknown)
-                        .collect()
-                })
-                .unwrap_or_default(),
-        ),
-        sources_rt: Arc::new(Mutex::new(None)),
-    };
-
-    let mut options = Options {
-        font_size: options
-            .get("font_size")
-            .and_then(|s| s.parse().ok().filter(|&s| s > 0.))
-            .unwrap_or(40.),
-        transparency: options
-            .get("transparency")
-            .and_then(|t| t.parse().ok())
-            .unwrap_or(0x30),
-        reserved_space: options
-            .get("reserved_space")
-            .and_then(|r| r.parse().ok().filter(|r| (0. ..1.).contains(r)))
-            .unwrap_or(0.),
-        delay: 0.,
-    };
-
     for (name, format) in [
         (c"script-opts", mpv_format::MPV_FORMAT_NODE),
         (c"pause", mpv_format::MPV_FORMAT_FLAG),
@@ -152,12 +69,11 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
         }
     }
 
-    let comments = Arc::new(Mutex::new(None));
-    let enabled = Arc::new(AtomicBool::new(false));
+    let (mut options, filter) = read_options();
     let mut handle = spawn(async {});
     let mut pause = true;
     loop {
-        let timeout = if !pause && enabled.load(Ordering::SeqCst) {
+        let timeout = if !pause && ENABLED.load(Ordering::SeqCst) {
             INTERVAL
         } else {
             -1.
@@ -170,21 +86,16 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             }
             mpv_event_id::MPV_EVENT_FILE_LOADED => {
                 handle.abort();
-                *comments.lock().await = None;
+                *COMMENTS.lock().await = None;
                 options.delay = 0.;
-                if enabled.load(Ordering::SeqCst) {
+                if ENABLED.load(Ordering::SeqCst) {
                     remove_overlay();
-                    handle = spawn(get(
-                        comments.clone(),
-                        enabled.clone(),
-                        filter.clone(),
-                        options,
-                    ));
+                    handle = spawn(get(filter.clone(), options));
                 }
             }
             mpv_event_id::MPV_EVENT_SEEK => {
-                if enabled.load(Ordering::SeqCst) {
-                    if let Some(comments) = &mut *comments.lock().await {
+                if ENABLED.load(Ordering::SeqCst) {
+                    if let Some(comments) = &mut *COMMENTS.lock().await {
                         reset(comments);
                     }
                 }
@@ -200,17 +111,16 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     let keys = unsafe { from_raw_parts(list.keys, num) };
                     let values = unsafe { from_raw_parts(list.values, num) };
                     for (key, value) in keys.iter().zip(values) {
-                        if unsafe {
-                            CStr::from_ptr(key.cast())
-                                .to_str()
-                                .map(|key| key == format!("{}-filter_source", CLIENT_NAME))
-                                .unwrap_or(false)
-                        } {
+                        if unsafe { CStr::from_ptr(key.cast()) }
+                            .to_str()
+                            .map(|key| key == format!("{}-filter_source", unsafe { CLIENT_NAME }))
+                            .unwrap_or(false)
+                        {
                             assert_eq!(value.format, mpv_format::MPV_FORMAT_STRING);
                             match unsafe { CStr::from_ptr(value.u.string) }.to_str() {
                                 Ok(value) => {
                                     *filter.sources_rt.lock().await = if value.is_empty() {
-                                        if let Some(comments) = &mut *comments.lock().await {
+                                        if let Some(comments) = &mut *COMMENTS.lock().await {
                                             for comment in comments {
                                                 comment.blocked =
                                                     filter.sources.contains(&comment.source);
@@ -229,7 +139,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                             .map(Into::into)
                                             .filter(|&s| s != Source::Unknown)
                                             .collect::<HashSet<_>>();
-                                        if let Some(comments) = &mut *comments.lock().await {
+                                        if let Some(comments) = &mut *COMMENTS.lock().await {
                                             for comment in comments {
                                                 comment.blocked = sources.contains(&comment.source);
                                                 comment.x = None;
@@ -262,11 +172,11 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                 {
                     let arg1 = unsafe { CStr::from_ptr(*arg1) };
                     if arg1 == c"toggle-danmaku" {
-                        if enabled.fetch_xor(true, Ordering::SeqCst) {
+                        if ENABLED.fetch_xor(true, Ordering::SeqCst) {
                             remove_overlay();
                             osd_message("Danmaku: off");
                         } else {
-                            match &mut *comments.lock().await {
+                            match &mut *COMMENTS.lock().await {
                                 Some(comments) => {
                                     reset(comments);
                                     loaded(comments);
@@ -274,12 +184,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                 None => {
                                     osd_message("Danmaku: on");
                                     handle.abort();
-                                    handle = spawn(get(
-                                        comments.clone(),
-                                        enabled.clone(),
-                                        filter.clone(),
-                                        options,
-                                    ));
+                                    handle = spawn(get(filter.clone(), options));
                                 }
                             }
                         }
@@ -289,7 +194,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                 match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok()) {
                                     Some(seconds) => {
                                         options.delay += seconds;
-                                        if let Some(comments) = &mut *comments.lock().await {
+                                        if let Some(comments) = &mut *COMMENTS.lock().await {
                                             reset(comments);
                                         }
                                         osd_message(&format!(
@@ -312,8 +217,8 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             _ => (),
         }
 
-        if enabled.load(Ordering::SeqCst) {
-            if let Some(comments) = &mut *comments.lock().await {
+        if ENABLED.load(Ordering::SeqCst) {
+            if let Some(comments) = &mut *COMMENTS.lock().await {
                 render(comments, options);
             }
         }
@@ -392,27 +297,22 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
     Some(())
 }
 
-async fn get(
-    comments: Arc<Mutex<Option<Vec<Danmaku>>>>,
-    enabled: Arc<AtomicBool>,
-    filter: Filter,
-    options: Options,
-) {
+async fn get(filter: Arc<Filter>, options: Options) {
     let Some(path) = get_property_string(c"path") else {
         return;
     };
     match get_danmaku(path, filter).await {
         Ok(mut danmaku) => {
-            if enabled.load(Ordering::SeqCst) {
+            if ENABLED.load(Ordering::SeqCst) {
                 if let Some(true) = get_property_bool(c"pause") {
                     render(&mut danmaku, options);
                 }
                 loaded(&danmaku);
             }
-            *comments.lock().await = Some(danmaku)
+            *COMMENTS.lock().await = Some(danmaku)
         }
         Err(error) => {
-            if enabled.load(Ordering::SeqCst) {
+            if ENABLED.load(Ordering::SeqCst) {
                 osd_message(&format!("Danmaku: {}", error));
             }
             log_error(error);
@@ -420,7 +320,7 @@ async fn get(
     }
 }
 
-fn reset(comments: &mut Vec<Danmaku>) {
+fn reset(comments: &mut [Danmaku]) {
     for comment in comments {
         comment.x = None;
         comment.row = None;
