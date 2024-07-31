@@ -21,7 +21,6 @@ pub struct Options {
     pub font_size: f64,
     pub transparency: u8,
     pub reserved_space: f64,
-    pub delay: f64,
 }
 
 #[derive(Default)]
@@ -36,7 +35,6 @@ pub fn read_options() -> (Options, Arc<Filter>) {
         font_size: 40.,
         transparency: 0x30,
         reserved_space: 0.,
-        delay: 0.,
     };
     let Some(path) = expand_path(&format!("~~/script-opts/{}.conf", unsafe { CLIENT_NAME })) else {
         return (opts, Default::default());

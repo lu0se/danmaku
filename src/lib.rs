@@ -18,6 +18,7 @@ use crate::{
     options::read_options,
 };
 use anyhow::anyhow;
+use atomic_float::AtomicF64;
 use ffi::{mpv_event_property, mpv_node};
 use options::{Filter, Options};
 use std::{
@@ -41,6 +42,7 @@ pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+static DELAY: AtomicF64 = AtomicF64::new(0.);
 static COMMENTS: LazyLock<Mutex<Option<Vec<Danmaku>>>> = LazyLock::new(|| Mutex::new(None));
 
 #[no_mangle]
@@ -69,7 +71,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
         }
     }
 
-    let (mut options, filter) = read_options();
+    let (options, filter) = read_options();
     let mut handle = spawn(async {});
     let mut pause = true;
     loop {
@@ -87,7 +89,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             mpv_event_id::MPV_EVENT_FILE_LOADED => {
                 handle.abort();
                 *COMMENTS.lock().await = None;
-                options.delay = 0.;
+                DELAY.store(0., Ordering::SeqCst);
                 if ENABLED.load(Ordering::SeqCst) {
                     remove_overlay();
                     handle = spawn(get(filter.clone(), options));
@@ -193,13 +195,14 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                             Some(seconds) => {
                                 match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok()) {
                                     Some(seconds) => {
-                                        options.delay += seconds;
+                                        let delay =
+                                            DELAY.fetch_add(seconds, Ordering::SeqCst) + seconds;
                                         if let Some(comments) = &mut *COMMENTS.lock().await {
                                             reset(comments);
                                         }
                                         osd_message(&format!(
                                             "Danmaku delay: {:.0} ms",
-                                            options.delay * 1000.
+                                            delay * 1000.
                                         ));
                                     }
                                     None => {
@@ -247,8 +250,9 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
     );
 
     let mut danmaku = Vec::new();
+    let delay = DELAY.load(Ordering::SeqCst);
     for comment in comments.iter_mut().filter(|c| !c.blocked) {
-        let time = comment.time + options.delay;
+        let time = comment.time + delay;
         if time > pos + DURATION / 2. {
             break;
         }
