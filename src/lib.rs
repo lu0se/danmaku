@@ -102,7 +102,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     }
                 }
             }
-            mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => {
+            mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => 'a: {
                 let data = unsafe { &*(event.data as *mut mpv_event_property) };
                 let name = unsafe { CStr::from_ptr(data.name) };
                 if name == c"script-opts" && data.format == mpv_format::MPV_FORMAT_NODE {
@@ -110,6 +110,9 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     assert_eq!(data.format, mpv_format::MPV_FORMAT_NODE_MAP);
                     let list = unsafe { &*data.u.list };
                     let num = list.num.try_into().unwrap();
+                    if num == 0 {
+                        break 'a;
+                    }
                     let keys = unsafe { from_raw_parts(list.keys, num) };
                     let values = unsafe { from_raw_parts(list.values, num) };
                     for (key, value) in keys.iter().zip(values) {
