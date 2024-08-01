@@ -5,7 +5,7 @@ pub mod mpv;
 pub mod options;
 
 use crate::{
-    danmaku::{get_danmaku, Danmaku, Source},
+    danmaku::{get_danmaku, Danmaku, Source, Status},
     ffi::{
         mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_format, mpv_handle,
         mpv_observe_property, mpv_wait_event,
@@ -21,6 +21,7 @@ use anyhow::anyhow;
 use atomic_float::AtomicF64;
 use ffi::{mpv_event_property, mpv_node};
 use options::{Filter, Options};
+use rand::{thread_rng, Rng};
 use std::{
     cmp::max,
     collections::HashSet,
@@ -35,8 +36,10 @@ use std::{
 };
 use tokio::{runtime::Builder, spawn, sync::Mutex};
 
-const DURATION: f64 = 12.;
+const MAX_DURATION: f64 = 12.;
 const INTERVAL: f64 = 0.005;
+const MIN_STEP: f64 = INTERVAL / MAX_DURATION;
+const MAX_STEP: f64 = MIN_STEP * 1.3;
 
 pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
@@ -95,7 +98,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     handle = spawn(get(filter.clone(), options));
                 }
             }
-            mpv_event_id::MPV_EVENT_SEEK => {
+            mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => {
                 if ENABLED.load(Ordering::SeqCst) {
                     if let Some(comments) = &mut *COMMENTS.lock().await {
                         reset(comments);
@@ -129,8 +132,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                             for comment in comments {
                                                 comment.blocked =
                                                     filter.sources.contains(&comment.source);
-                                                comment.x = None;
-                                                comment.row = None;
+                                                comment.status = None;
                                             }
                                         }
                                         osd_message(&format!(
@@ -147,8 +149,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                         if let Some(comments) = &mut *COMMENTS.lock().await {
                                             for comment in comments {
                                                 comment.blocked = sources.contains(&comment.source);
-                                                comment.x = None;
-                                                comment.row = None;
+                                                comment.status = None;
                                             }
                                         }
                                         osd_message(&format!(
@@ -231,6 +232,12 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Row {
+    end: f64,
+    step: f64,
+}
+
 fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
     let mut width = 1920.;
     let mut height = 1080.;
@@ -243,46 +250,60 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
     let pos = get_property_f64(c"time-pos")?;
     let speed = get_property_f64(c"speed")?;
     let spacing = options.font_size / 10.;
-    let mut ends = Vec::new();
-    ends.resize(
+    let mut rows = Vec::new();
+    rows.resize(
         max(
             (height * (1. - options.reserved_space) / (options.font_size + spacing)) as usize,
             1,
         ),
-        None,
+        Row {
+            end: 0.,
+            step: MIN_STEP,
+        },
     );
 
     let mut danmaku = Vec::new();
     let delay = DELAY.load(Ordering::SeqCst);
+    let mut rng = thread_rng();
     for comment in comments.iter_mut().filter(|c| !c.blocked) {
         let time = comment.time + delay;
-        if time > pos + DURATION / 2. {
+        if time > pos {
             break;
         }
 
-        let x = comment
-            .x
-            .get_or_insert_with(|| width - (pos - time) * width / DURATION);
-        if *x + comment.count as f64 * options.font_size + spacing < 0. {
+        let status = comment.status.get_or_insert_with(|| {
+            let ticks = (pos - time) / INTERVAL;
+            for (row, status) in rows.iter().enumerate() {
+                if status.end < width - width * ticks * MIN_STEP {
+                    let max_step = if status.end == 0. {
+                        MAX_STEP
+                    } else {
+                        // 1 / max_step - ticks = status.end / width / status.step
+                        let max_step = 1. / (ticks + status.end / width / status.step);
+                        max_step.min(MAX_STEP)
+                    };
+                    let step = rng.gen_range(MIN_STEP..max_step);
+                    let x = width - width * ticks * step;
+                    return Status { x, row, step };
+                }
+            }
+            let row = rows
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.end.partial_cmp(&b.1.end).unwrap())
+                .map(|(row, _)| row)
+                .unwrap();
+            let step = MIN_STEP;
+            let x = width - width * ticks * step;
+            Status { x, row, step }
+        });
+        if status.x + comment.count as f64 * options.font_size + spacing <= 0. {
             continue;
         }
-        let row = *comment.row.get_or_insert_with(|| {
-            ends.iter()
-                .enumerate()
-                .find(|(_, end)| end.map(|end: f64| end < *x).unwrap_or(true))
-                .map(|(row, _)| row)
-                .unwrap_or_else(|| {
-                    ends.iter()
-                        .enumerate()
-                        .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                        .map(|(row, _)| row)
-                        .unwrap()
-                })
-        });
         danmaku.push(format!(
             "{{\\pos({},{})\\c&H{:x}{:x}{:x}&\\alpha&H{:x}\\fs{}\\bord1.5\\shad0\\b1\\q2}}{}",
-            *x,
-            row as f64 * (options.font_size + spacing),
+            status.x,
+            status.row as f64 * (options.font_size + spacing),
             comment.b,
             comment.g,
             comment.r,
@@ -291,12 +312,14 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
             comment.message
         ));
 
-        *x -= width / DURATION * speed * INTERVAL;
-        if let Some(end) = ends.get_mut(row) {
-            let new_end = *x + comment.count as f64 * options.font_size + spacing;
-            match end {
-                Some(end) => *end = end.max(new_end),
-                None => *end = Some(new_end),
+        status.x -= width * speed * status.step;
+        if let Some(row) = rows.get_mut(status.row) {
+            let end = status.x + comment.count as f64 * options.font_size + spacing;
+            if end / status.step > row.end / row.step {
+                *row = Row {
+                    end,
+                    step: status.step,
+                };
             }
         }
     }
@@ -329,8 +352,7 @@ async fn get(filter: Arc<Filter>, options: Options) {
 
 fn reset(comments: &mut [Danmaku]) {
     for comment in comments {
-        comment.x = None;
-        comment.row = None;
+        comment.status = None;
     }
 }
 

@@ -13,6 +13,12 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+pub struct Status {
+    pub x: f64,
+    pub row: usize,
+    pub step: f64,
+}
+
 pub struct Danmaku {
     pub message: String,
     pub count: usize,
@@ -21,9 +27,8 @@ pub struct Danmaku {
     pub g: u8,
     pub b: u8,
     pub source: Source,
-    pub x: Option<f64>,
-    pub row: Option<usize>,
     pub blocked: bool,
+    pub status: Option<Status>,
 }
 
 #[derive(Deserialize)]
@@ -139,12 +144,11 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Arc<Filter>) -> Result
                 g: (color % (256 * 256) / 256).try_into().unwrap(),
                 b: (color % 256).try_into().unwrap(),
                 source,
-                x: None,
-                row: None,
                 blocked: sources_rt
                     .as_ref()
                     .map(|s| s.contains(&source))
                     .unwrap_or_else(|| filter.sources.contains(&source)),
+                status: None,
             }
         })
         .collect::<Vec<_>>();
