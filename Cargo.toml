@@ -9,7 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0"
-atomic_float = "1.0"
 hex = "0.4"
 md-5 = "0.10"
 rand = "0.8"
@@ -20,6 +19,6 @@ tokio = { version = "1.36", features = ["rt-multi-thread", "sync"] }
 unicode-segmentation = "1.11"
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 strip = true

@@ -3,13 +3,14 @@
 
 use crate::{
     ffi::{
-        mpv_command, mpv_command_node, mpv_command_ret, mpv_format, mpv_free,
+        mpv_command, mpv_command_node, mpv_command_ret, mpv_error_string, mpv_format, mpv_free,
         mpv_free_node_contents, mpv_get_property, mpv_node, mpv_node_list, u,
     },
     log_code, CTX,
 };
+use anyhow::{anyhow, Result};
 use std::{
-    ffi::{c_char, c_int, CStr, CString},
+    ffi::{c_char, CStr, CString},
     mem::MaybeUninit,
     ptr::{addr_of_mut, null, null_mut},
 };
@@ -139,24 +140,6 @@ pub fn get_property_f64(name: &CStr) -> Option<f64> {
     }
 }
 
-pub fn get_property_bool(name: &CStr) -> Option<bool> {
-    let mut data = unsafe { MaybeUninit::<c_int>::uninit().assume_init() };
-    let error = unsafe {
-        mpv_get_property(
-            CTX,
-            name.as_ptr(),
-            mpv_format::MPV_FORMAT_FLAG,
-            addr_of_mut!(data).cast(),
-        )
-    };
-    if error < 0 {
-        log_code(error);
-        None
-    } else {
-        Some(data != 0)
-    }
-}
-
 pub fn get_property_string(name: &CStr) -> Option<String> {
     let mut data = unsafe { MaybeUninit::<*mut c_char>::uninit().assume_init() };
     let error = unsafe {
@@ -180,15 +163,17 @@ pub fn get_property_string(name: &CStr) -> Option<String> {
     }
 }
 
-pub fn expand_path(path: &str) -> Option<String> {
+pub fn expand_path(path: &str) -> Result<String> {
     unsafe {
         let arg2 = CString::new(path).unwrap();
         let mut args = [c"expand-path".as_ptr(), arg2.as_ptr(), null()];
         let mut result = MaybeUninit::<mpv_node>::uninit().assume_init();
         let error = mpv_command_ret(CTX, args.as_mut_ptr(), addr_of_mut!(result));
         if error < 0 {
-            log_code(error);
-            return None;
+            return Err(anyhow!(
+                "{}",
+                CStr::from_ptr(mpv_error_string(error)).to_str().unwrap()
+            ));
         }
         assert_eq!(result.format, mpv_format::MPV_FORMAT_STRING);
         let path = CStr::from_ptr(result.u.string)
@@ -196,7 +181,7 @@ pub fn expand_path(path: &str) -> Option<String> {
             .unwrap()
             .to_string();
         mpv_free_node_contents(addr_of_mut!(result));
-        Some(path)
+        Ok(path)
     }
 }
 

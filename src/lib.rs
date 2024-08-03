@@ -7,23 +7,16 @@ pub mod options;
 use crate::{
     danmaku::{get_danmaku, Danmaku, Source, Status},
     ffi::{
-        mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_format, mpv_handle,
-        mpv_observe_property, mpv_wait_event,
+        mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_event_property, mpv_format,
+        mpv_handle, mpv_node, mpv_observe_property, mpv_wait_event, mpv_wakeup,
     },
     log::{log_code, log_error},
-    mpv::{
-        get_property_bool, get_property_f64, get_property_string, osd_message, osd_overlay,
-        remove_overlay,
-    },
-    options::read_options,
+    mpv::{get_property_f64, get_property_string, osd_message, osd_overlay, remove_overlay},
+    options::{read_options, Filter, Options},
 };
 use anyhow::anyhow;
-use atomic_float::AtomicF64;
-use ffi::{mpv_event_property, mpv_node};
-use options::{Filter, Options};
 use rand::{thread_rng, Rng};
 use std::{
-    cmp::max,
     collections::HashSet,
     ffi::CStr,
     os::raw::c_int,
@@ -45,8 +38,15 @@ pub static mut CTX: *mut mpv_handle = null_mut();
 pub static mut CLIENT_NAME: &str = "";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static DELAY: AtomicF64 = AtomicF64::new(0.);
 static COMMENTS: LazyLock<Mutex<Option<Vec<Danmaku>>>> = LazyLock::new(|| Mutex::new(None));
+
+#[derive(Default, Clone, Copy)]
+struct Params {
+    delay: f64,
+    speed: f64,
+    osd_width: f64,
+    osd_height: f64,
+}
 
 #[no_mangle]
 extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
@@ -59,23 +59,31 @@ extern "C" fn mpv_open_cplugin(ctx: *mut mpv_handle) -> c_int {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(main(ctx))
+        .block_on(main())
 }
 
-async fn main(ctx: *mut mpv_handle) -> c_int {
+async fn main() -> c_int {
     for (name, format) in [
         (c"script-opts", mpv_format::MPV_FORMAT_NODE),
         (c"pause", mpv_format::MPV_FORMAT_FLAG),
+        (c"speed", mpv_format::MPV_FORMAT_DOUBLE),
+        (c"osd-width", mpv_format::MPV_FORMAT_DOUBLE),
+        (c"osd-height", mpv_format::MPV_FORMAT_DOUBLE),
     ] {
-        let error = unsafe { mpv_observe_property(ctx, 0, name.as_ptr(), format) };
+        let error = unsafe { mpv_observe_property(CTX, 0, name.as_ptr(), format) };
         if error < 0 {
             log_code(error);
             return -1;
         }
     }
 
-    let (options, filter) = read_options();
+    let (options, filter) = read_options()
+        .map_err(|e| log_error(&e))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let mut handle = spawn(async {});
+    let mut params = Params::default();
     let mut pause = true;
     loop {
         let timeout = if !pause && ENABLED.load(Ordering::SeqCst) {
@@ -83,7 +91,7 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
         } else {
             -1.
         };
-        let event = unsafe { &*mpv_wait_event(ctx, timeout) };
+        let event = unsafe { &*mpv_wait_event(CTX, timeout) };
         match event.event_id {
             mpv_event_id::MPV_EVENT_SHUTDOWN => {
                 handle.abort();
@@ -92,30 +100,40 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
             mpv_event_id::MPV_EVENT_FILE_LOADED => {
                 handle.abort();
                 *COMMENTS.lock().await = None;
-                DELAY.store(0., Ordering::SeqCst);
+                params.delay = 0.;
                 if ENABLED.load(Ordering::SeqCst) {
                     remove_overlay();
-                    handle = spawn(get(filter.clone(), options));
+                    handle = spawn(get(filter.clone()));
                 }
             }
             mpv_event_id::MPV_EVENT_PLAYBACK_RESTART => {
                 if ENABLED.load(Ordering::SeqCst) {
                     if let Some(comments) = &mut *COMMENTS.lock().await {
-                        reset(comments);
+                        reset_status(comments);
+                        render(comments, params, options);
                     }
                 }
             }
             mpv_event_id::MPV_EVENT_PROPERTY_CHANGE => 'a: {
                 let data = unsafe { &*(event.data as *mut mpv_event_property) };
+                if data.format == mpv_format::MPV_FORMAT_NONE {
+                    break 'a;
+                }
                 let name = unsafe { CStr::from_ptr(data.name) };
-                if name == c"script-opts" && data.format == mpv_format::MPV_FORMAT_NODE {
+                if name == c"pause" {
+                    pause = unsafe { *(data.data as *mut c_int) } != 0;
+                } else if name == c"osd-width" {
+                    params.osd_width = unsafe { *(data.data as *mut f64) };
+                } else if name == c"osd-height" {
+                    params.osd_height = unsafe { *(data.data as *mut f64) };
+                } else if name == c"script-opts" {
                     let data = unsafe { &*(data.data as *mut mpv_node) };
                     assert_eq!(data.format, mpv_format::MPV_FORMAT_NODE_MAP);
                     let list = unsafe { &*data.u.list };
-                    let num = list.num.try_into().unwrap();
-                    if num == 0 {
+                    if list.num == 0 {
                         break 'a;
                     }
+                    let num = list.num.try_into().unwrap();
                     let keys = unsafe { from_raw_parts(list.keys, num) };
                     let values = unsafe { from_raw_parts(list.values, num) };
                     for (key, value) in keys.iter().zip(values) {
@@ -129,10 +147,13 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                 Ok(value) => {
                                     *filter.sources_rt.lock().await = if value.is_empty() {
                                         if let Some(comments) = &mut *COMMENTS.lock().await {
-                                            for comment in comments {
+                                            for comment in comments.iter_mut() {
                                                 comment.blocked =
                                                     filter.sources.contains(&comment.source);
                                                 comment.status = None;
+                                            }
+                                            if ENABLED.load(Ordering::SeqCst) {
+                                                render(comments, params, options);
                                             }
                                         }
                                         osd_message(&format!(
@@ -147,9 +168,12 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                             .filter(|&s| s != Source::Unknown)
                                             .collect::<HashSet<_>>();
                                         if let Some(comments) = &mut *COMMENTS.lock().await {
-                                            for comment in comments {
+                                            for comment in comments.iter_mut() {
                                                 comment.blocked = sources.contains(&comment.source);
                                                 comment.status = None;
+                                            }
+                                            if ENABLED.load(Ordering::SeqCst) {
+                                                render(comments, params, options);
                                             }
                                         }
                                         osd_message(&format!(
@@ -159,13 +183,13 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                                         Some(sources)
                                     }
                                 }
-                                Err(error) => log_error(error.into()),
+                                Err(error) => log_error(&error.into()),
                             }
                             break;
                         }
                     }
-                } else if name == c"pause" && data.format == mpv_format::MPV_FORMAT_FLAG {
-                    pause = unsafe { *(data.data as *mut c_int) } != 0;
+                } else if name == c"speed" {
+                    params.speed = unsafe { *(data.data as *mut f64) };
                 }
             }
             mpv_event_id::MPV_EVENT_CLIENT_MESSAGE => 'a: {
@@ -179,55 +203,61 @@ async fn main(ctx: *mut mpv_handle) -> c_int {
                     let arg1 = unsafe { CStr::from_ptr(*arg1) };
                     if arg1 == c"toggle-danmaku" {
                         if ENABLED.fetch_xor(true, Ordering::SeqCst) {
+                            handle.abort();
                             remove_overlay();
                             osd_message("Danmaku: off");
                         } else {
                             match &mut *COMMENTS.lock().await {
                                 Some(comments) => {
-                                    reset(comments);
-                                    loaded(comments);
+                                    reset_status(comments);
+                                    render(comments, params, options);
+                                    loaded(comments.iter().filter(|c| !c.blocked).count());
                                 }
                                 None => {
+                                    handle = spawn(get(filter.clone()));
                                     osd_message("Danmaku: on");
-                                    handle.abort();
-                                    handle = spawn(get(filter.clone(), options));
                                 }
                             }
                         }
                     } else if arg1 == c"danmaku-delay" {
-                        match args.first().map(|&arg| unsafe { CStr::from_ptr(arg) }) {
-                            Some(seconds) => {
-                                match seconds.to_str().ok().and_then(|s| s.parse::<f64>().ok()) {
+                        match args.first() {
+                            Some(&seconds) => {
+                                match unsafe { CStr::from_ptr(seconds) }
+                                    .to_str()
+                                    .ok()
+                                    .and_then(|s| s.parse::<f64>().ok())
+                                {
                                     Some(seconds) => {
-                                        let delay =
-                                            DELAY.fetch_add(seconds, Ordering::SeqCst) + seconds;
-                                        if let Some(comments) = &mut *COMMENTS.lock().await {
-                                            reset(comments);
+                                        params.delay += seconds;
+                                        if ENABLED.load(Ordering::SeqCst) {
+                                            if let Some(comments) = &mut *COMMENTS.lock().await {
+                                                reset_status(comments);
+                                                render(comments, params, options);
+                                            }
                                         }
                                         osd_message(&format!(
                                             "Danmaku delay: {:.0} ms",
-                                            delay * 1000.
+                                            params.delay * 1000.
                                         ));
                                     }
                                     None => {
-                                        log_error(anyhow!("command danmaku-delay: invalid time"))
+                                        log_error(&anyhow!("command danmaku-delay: invalid time"))
                                     }
                                 }
                             }
-                            None => log_error(anyhow!(
+                            None => log_error(&anyhow!(
                                 "command danmaku-delay: required argument seconds not set"
                             )),
                         }
                     }
                 }
             }
-            _ => (),
-        }
-
-        if ENABLED.load(Ordering::SeqCst) {
-            if let Some(comments) = &mut *COMMENTS.lock().await {
-                render(comments, options);
+            mpv_event_id::MPV_EVENT_NONE => {
+                if let Some(comments) = &mut *COMMENTS.lock().await {
+                    render(comments, params, options);
+                }
             }
+            _ => (),
         }
     }
 }
@@ -238,35 +268,33 @@ struct Row {
     step: f64,
 }
 
-fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
+fn render(comments: &mut [Danmaku], params: Params, options: Options) {
+    let Some(pos) = get_property_f64(c"time-pos") else {
+        return;
+    };
     let mut width = 1920.;
     let mut height = 1080.;
-    let ratio = get_property_f64(c"osd-width")? / get_property_f64(c"osd-height")?;
-    if ratio > width / height {
+    let ratio = params.osd_width / params.osd_height;
+    if width / height < ratio {
         height = width / ratio;
-    } else if ratio < width / height {
+    } else if width / height > ratio {
         width = height * ratio;
     }
-    let pos = get_property_f64(c"time-pos")?;
-    let speed = get_property_f64(c"speed")?;
     let spacing = options.font_size / 10.;
-    let mut rows = Vec::new();
-    rows.resize(
-        max(
-            (height * (1. - options.reserved_space) / (options.font_size + spacing)) as usize,
-            1,
-        ),
+    let mut rows = vec![
         Row {
             end: 0.,
             step: MIN_STEP,
-        },
-    );
+        };
+        ((height * (1. - options.reserved_space) / (options.font_size + spacing))
+            as usize)
+            .max(1)
+    ];
 
     let mut danmaku = Vec::new();
-    let delay = DELAY.load(Ordering::SeqCst);
     let mut rng = thread_rng();
     for comment in comments.iter_mut().filter(|c| !c.blocked) {
-        let time = comment.time + delay;
+        let time = comment.time + params.delay;
         if time > pos {
             break;
         }
@@ -312,7 +340,7 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
             comment.message
         ));
 
-        status.x -= width * speed * status.step;
+        status.x -= width * status.step * params.speed;
         if let Some(row) = rows.get_mut(status.row) {
             let end = status.x + comment.count as f64 * options.font_size + spacing;
             if end / status.step > row.end / row.step {
@@ -324,40 +352,37 @@ fn render(comments: &mut [Danmaku], options: Options) -> Option<()> {
         }
     }
     osd_overlay(&danmaku.join("\n"), width as i64, height as i64);
-    Some(())
 }
 
-async fn get(filter: Arc<Filter>, options: Options) {
+async fn get(filter: Arc<Filter>) {
     let Some(path) = get_property_string(c"path") else {
         return;
     };
     match get_danmaku(path, filter).await {
-        Ok(mut danmaku) => {
+        Ok(danmaku) => {
+            let n = danmaku.iter().filter(|c| !c.blocked).count();
+            *COMMENTS.lock().await = Some(danmaku);
             if ENABLED.load(Ordering::SeqCst) {
-                if let Some(true) = get_property_bool(c"pause") {
-                    render(&mut danmaku, options);
-                }
-                loaded(&danmaku);
+                unsafe { mpv_wakeup(CTX) };
+                loaded(n);
             }
-            *COMMENTS.lock().await = Some(danmaku)
         }
         Err(error) => {
+            log_error(&error);
             if ENABLED.load(Ordering::SeqCst) {
                 osd_message(&format!("Danmaku: {}", error));
             }
-            log_error(error);
         }
     }
 }
 
-fn reset(comments: &mut [Danmaku]) {
+fn reset_status(comments: &mut [Danmaku]) {
     for comment in comments {
         comment.status = None;
     }
 }
 
-fn loaded(comments: &[Danmaku]) {
-    let n = comments.iter().filter(|c| !c.blocked).count();
+fn loaded(n: usize) {
     osd_message(&format!(
         "Loaded {} danmaku comment{}",
         n,

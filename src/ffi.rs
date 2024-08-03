@@ -166,6 +166,7 @@ extern "C" {
     ) -> c_int;
     pub fn mpv_event_name(event: mpv_event_id) -> *const c_char;
     pub fn mpv_wait_event(ctx: *mut mpv_handle, timeout: f64) -> *mut mpv_event;
+    pub fn mpv_wakeup(ctx: *mut mpv_handle);
 }
 
 #[cfg(target_os = "windows")]
@@ -223,6 +224,9 @@ static mut pfn_mpv_event_name: Option<extern "C" fn(event: mpv_event_id) -> *con
 pub static mut pfn_mpv_wait_event: Option<
     extern "C" fn(ctx: *mut mpv_handle, timeout: f64) -> *mut mpv_event,
 > = None;
+#[cfg(target_os = "windows")]
+#[no_mangle]
+pub static mut pfn_mpv_wakeup: Option<extern "C" fn(ctx: *mut mpv_handle)> = None;
 
 #[cfg(target_os = "windows")]
 pub unsafe fn mpv_error_string(error: c_int) -> *const c_char {
@@ -285,4 +289,8 @@ pub unsafe fn mpv_event_name(event: mpv_event_id) -> *const c_char {
 #[cfg(target_os = "windows")]
 pub unsafe fn mpv_wait_event(ctx: *mut mpv_handle, timeout: f64) -> *mut mpv_event {
     pfn_mpv_wait_event.unwrap()(ctx, timeout)
+}
+#[cfg(target_os = "windows")]
+pub unsafe fn mpv_wakeup(ctx: *mut mpv_handle) {
+    pfn_mpv_wakeup.unwrap()(ctx)
 }

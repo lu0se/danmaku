@@ -11,6 +11,6 @@ pub fn log_code(error: c_int) {
     }
 }
 
-pub fn log_error(error: Error) {
+pub fn log_error(error: &Error) {
     unsafe { eprintln!("[{CLIENT_NAME}] {error}") }
 }
