@@ -1,11 +1,11 @@
-pub mod danmaku;
+pub mod dandanplay;
 pub mod ffi;
 pub mod log;
 pub mod mpv;
 pub mod options;
 
 use crate::{
-    danmaku::{get_danmaku, Danmaku, Source, Status},
+    dandanplay::{get_danmaku, Danmaku, Source, Status},
     ffi::{
         mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_event_property, mpv_format,
         mpv_handle, mpv_node, mpv_observe_property, mpv_wait_event, mpv_wakeup,

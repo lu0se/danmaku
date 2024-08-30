@@ -1,4 +1,4 @@
-use crate::{danmaku::Source, log::log_error, mpv::expand_path, CLIENT_NAME};
+use crate::{dandanplay::Source, log::log_error, mpv::expand_path, CLIENT_NAME};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::{
