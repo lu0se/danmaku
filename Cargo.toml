@@ -2,7 +2,7 @@
 name = "danmaku"
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.81"
 
 [lib]
 crate-type = ["cdylib"]

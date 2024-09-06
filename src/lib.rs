@@ -202,7 +202,7 @@ async fn main() -> c_int {
                 {
                     let arg1 = unsafe { CStr::from_ptr(*arg1) };
                     if arg1 == c"toggle-danmaku" {
-                        if ENABLED.fetch_xor(true, Ordering::SeqCst) {
+                        if ENABLED.fetch_not(Ordering::SeqCst) {
                             handle.abort();
                             remove_overlay();
                             osd_message("Danmaku: off");
