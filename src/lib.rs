@@ -139,8 +139,9 @@ async fn main() -> c_int {
                     for (key, value) in keys.iter().zip(values) {
                         if unsafe { CStr::from_ptr(key.cast()) }
                             .to_str()
-                            .map(|key| key == format!("{}-filter_source", unsafe { CLIENT_NAME }))
-                            .unwrap_or(false)
+                            .is_ok_and(|key| {
+                                key == format!("{}-filter_source", unsafe { CLIENT_NAME })
+                            })
                         {
                             assert_eq!(value.format, mpv_format::MPV_FORMAT_STRING);
                             match unsafe { CStr::from_ptr(value.u.string) }.to_str() {
