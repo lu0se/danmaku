@@ -5,7 +5,7 @@ pub mod mpv;
 pub mod options;
 
 use crate::{
-    dandanplay::{get_danmaku, Danmaku, Source, Status},
+    dandanplay::{get_danmaku, Danmaku, Source, Status, StatusInner},
     ffi::{
         mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_event_property, mpv_format,
         mpv_handle, mpv_node, mpv_observe_property, mpv_wait_event, mpv_wakeup,
@@ -151,7 +151,7 @@ async fn main() -> c_int {
                                             for comment in comments.iter_mut() {
                                                 comment.blocked =
                                                     filter.sources.contains(&comment.source);
-                                                comment.status = None;
+                                                comment.status = Status::Uninitialized;
                                             }
                                             if ENABLED.load(Ordering::SeqCst) {
                                                 render(comments, params, options);
@@ -171,7 +171,7 @@ async fn main() -> c_int {
                                         if let Some(comments) = &mut *COMMENTS.lock().await {
                                             for comment in comments.iter_mut() {
                                                 comment.blocked = sources.contains(&comment.source);
-                                                comment.status = None;
+                                                comment.status = Status::Uninitialized;
                                             }
                                             if ENABLED.load(Ordering::SeqCst) {
                                                 render(comments, params, options);
@@ -294,38 +294,46 @@ fn render(comments: &mut [Danmaku], params: Params, options: Options) {
 
     let mut danmaku = Vec::new();
     let mut rng = thread_rng();
-    for comment in comments.iter_mut().filter(|c| !c.blocked) {
+    'it: for comment in comments.iter_mut().filter(|c| !c.blocked) {
         let time = comment.time + params.delay;
         if time > pos {
             break;
         }
 
-        let status = comment.status.get_or_insert_with(|| {
-            let ticks = (pos - time) / INTERVAL;
-            for (row, status) in rows.iter().enumerate() {
-                if status.end < width - width * ticks * MIN_STEP {
-                    let max_step = if status.end == 0. {
-                        MAX_STEP
-                    } else {
-                        // 1 / max_step - ticks = status.end / width / status.step
-                        let max_step = 1. / (ticks + status.end / width / status.step);
-                        max_step.min(MAX_STEP)
-                    };
-                    let step = rng.gen_range(MIN_STEP..max_step);
-                    let x = width - width * ticks * step;
-                    return Status { x, row, step };
+        let status = match &mut comment.status {
+            Status::Status(status) => status,
+            Status::Overlapping => continue,
+            Status::Uninitialized => 'status: {
+                let ticks = (pos - time) / INTERVAL;
+                for (row, status) in rows.iter().enumerate() {
+                    if status.end < width - width * ticks * MIN_STEP {
+                        let max_step = if status.end == 0. {
+                            MAX_STEP
+                        } else {
+                            // 1 / max_step - ticks = status.end / width / status.step
+                            let max_step = 1. / (ticks + status.end / width / status.step);
+                            max_step.min(MAX_STEP)
+                        };
+                        let step = rng.gen_range(MIN_STEP..max_step);
+                        let x = width - width * ticks * step;
+                        break 'status comment.status.insert(StatusInner { x, row, step });
+                    }
                 }
+                if options.no_overlap {
+                    comment.status = Status::Overlapping;
+                    continue 'it;
+                }
+                let row = rows
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.end.partial_cmp(&b.1.end).unwrap())
+                    .map(|(row, _)| row)
+                    .unwrap();
+                let step = MIN_STEP;
+                let x = width - width * ticks * step;
+                comment.status.insert(StatusInner { x, row, step })
             }
-            let row = rows
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.end.partial_cmp(&b.1.end).unwrap())
-                .map(|(row, _)| row)
-                .unwrap();
-            let step = MIN_STEP;
-            let x = width - width * ticks * step;
-            Status { x, row, step }
-        });
+        };
         if status.x + comment.count as f64 * options.font_size + spacing <= 0. {
             continue;
         }
@@ -379,7 +387,7 @@ async fn get(filter: Arc<Filter>) {
 
 fn reset_status(comments: &mut [Danmaku]) {
     for comment in comments {
-        comment.status = None;
+        comment.status = Status::Uninitialized;
     }
 }
 

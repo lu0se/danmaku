@@ -21,6 +21,7 @@ pub struct Options {
     pub font_size: f64,
     pub transparency: u8,
     pub reserved_space: f64,
+    pub no_overlap: bool,
 }
 
 impl Default for Options {
@@ -29,6 +30,7 @@ impl Default for Options {
             font_size: 40.,
             transparency: 0x30,
             reserved_space: 0.,
+            no_overlap: true,
         }
     }
 }
@@ -77,6 +79,11 @@ pub fn read_options() -> Result<Option<(Options, Arc<Filter>)>> {
                         opts.reserved_space = r;
                     }
                 }
+                "no_overlap" => match v {
+                    "yes" => opts.no_overlap = true,
+                    "no" => opts.no_overlap = false,
+                    _ => (),
+                },
                 "filter" if !v.is_empty() => filter.keywords.extend(v.split(',').map(Into::into)),
                 "filter_source" if !v.is_empty() => filter.sources.extend(
                     v.split(',')

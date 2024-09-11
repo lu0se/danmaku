@@ -25,6 +25,7 @@ Set the following options in `script-opts/danmaku.conf` to configure the plugin:
 - `font_size=40`: danmaku font size.
 - `transparency=48`: 0 (opaque) to 255 (fully transparent).
 - `reserved_space=0`: the proportion of reserved space at the bottom of the screen, 0.0 to 1.0 (excluded).
+- `no_overlap=yes`: hide the overlapping danmaku, `yes` or `no`.
 - `filter=keyword1,keyword2`: comma separated keywords, danmaku that contains any of them will be blocked.
 - `filter_source=bilibili,gamer`: comma separated case-insensitive sources (`bilibili`, `gamer`, `acfun`, `qq`, `iqiyi`, `d` or `dandan`), danmaku from any of them will be blocked, runtime updatable via `script-opts` option/property.
 - `filter_bilibili=~~/files/bilibili.json`: filter file exported from bilibili, regex/user based blocking is not supported, double-tilde placeholders are expanded.

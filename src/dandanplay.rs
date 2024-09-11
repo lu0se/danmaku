@@ -7,16 +7,33 @@ use serde::Deserialize;
 use std::{
     collections::HashMap,
     fs::File,
+    hint,
     io::{copy, Read},
     path::Path,
     sync::{Arc, LazyLock},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-pub struct Status {
+pub struct StatusInner {
     pub x: f64,
     pub row: usize,
     pub step: f64,
+}
+
+pub enum Status {
+    Status(StatusInner),
+    Overlapping,
+    Uninitialized,
+}
+
+impl Status {
+    pub fn insert(&mut self, status: StatusInner) -> &mut StatusInner {
+        *self = Status::Status(status);
+        match self {
+            Status::Status(status) => status,
+            _ => unsafe { hint::unreachable_unchecked() },
+        }
+    }
 }
 
 pub struct Danmaku {
@@ -28,7 +45,7 @@ pub struct Danmaku {
     pub b: u8,
     pub source: Source,
     pub blocked: bool,
-    pub status: Option<Status>,
+    pub status: Status,
 }
 
 #[derive(Deserialize)]
@@ -148,7 +165,7 @@ pub async fn get_danmaku<P: AsRef<Path>>(path: P, filter: Arc<Filter>) -> Result
                     .as_ref()
                     .map(|s| s.contains(&source))
                     .unwrap_or_else(|| filter.sources.contains(&source)),
-                status: None,
+                status: Status::Uninitialized,
             }
         })
         .collect::<Vec<_>>();
