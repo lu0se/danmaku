@@ -21,6 +21,7 @@ pub struct Options {
     pub font_size: f64,
     pub transparency: u8,
     pub reserved_space: f64,
+    pub speed: f64,
     pub no_overlap: bool,
 }
 
@@ -30,6 +31,7 @@ impl Default for Options {
             font_size: 40.,
             transparency: 0x30,
             reserved_space: 0.,
+            speed: 1.,
             no_overlap: true,
         }
     }
@@ -77,6 +79,11 @@ pub fn read_options() -> Result<Option<(Options, Arc<Filter>)>> {
                 "reserved_space" => {
                     if let Some(r) = v.parse().ok().filter(|r| (0. ..1.).contains(r)) {
                         opts.reserved_space = r;
+                    }
+                }
+                "speed" => {
+                    if let Some(s) = v.parse().ok().filter(|s| *s > 0.) {
+                        opts.speed = s;
                     }
                 }
                 "no_overlap" => match v {

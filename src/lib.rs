@@ -349,7 +349,7 @@ fn render(comments: &mut [Danmaku], params: Params, options: Options) {
             comment.message
         ));
 
-        status.x -= width * status.step * params.speed;
+        status.x -= width * status.step * params.speed * options.speed;
         if let Some(row) = rows.get_mut(status.row) {
             let end = status.x + comment.count as f64 * options.font_size + spacing;
             if end / status.step > row.end / row.step {
