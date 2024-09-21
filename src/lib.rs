@@ -1,11 +1,11 @@
-pub mod dandanplay;
+pub mod danmaku;
 pub mod ffi;
 pub mod log;
 pub mod mpv;
 pub mod options;
 
 use crate::{
-    dandanplay::{get_danmaku, Danmaku, Source, Status, StatusInner},
+    danmaku::{get_danmaku,get_danmaku_byurl, Danmaku, Source, Status, StatusInner},
     ffi::{
         mpv_client_name, mpv_event_client_message, mpv_event_id, mpv_event_property, mpv_format,
         mpv_handle, mpv_node, mpv_observe_property, mpv_wait_event, mpv_wakeup,
@@ -250,6 +250,34 @@ async fn main() -> c_int {
                                 "command danmaku-delay: required argument seconds not set"
                             )),
                         }
+                    }else if arg1==c"danmaku-url" {
+                        match args.first() {
+                            Some(&url) => {
+                                match unsafe { CStr::from_ptr(url) }
+                                    .to_str()
+                                    .ok()
+                                {
+                                    Some(url) => {
+                                        if ENABLED.fetch_xor(true, Ordering::SeqCst) {
+                                            handle.abort();
+                                            *COMMENTS.lock().await = None;
+                                            remove_overlay();
+                                            handle = spawn(get_byurl(filter.clone(), url));
+                                            osd_message(&format!("Danmaku: on,{}", url));
+                                        } else {
+                                            handle = spawn(get_byurl(filter.clone(), url));
+                                            osd_message(&format!("Danmaku: on,{}", url));
+                                        }
+                                    }
+                                    None => {
+                                        log_error(&anyhow!("command danmaku-url: invalid url"))
+                                    }
+                                }
+                            }
+                            None => log_error(&anyhow!(
+                                "command danmaku-url: required argument url not set"
+                            )),
+                        }
                     }
                 }
             }
@@ -364,10 +392,29 @@ fn render(comments: &mut [Danmaku], params: Params, options: Options) {
 }
 
 async fn get(filter: Arc<Filter>) {
-    let Some(path) = get_property_string(c"path") else {
+    let Some(name) = get_property_string(c"media-title") else {
         return;
     };
-    match get_danmaku(path, filter).await {
+    match get_danmaku(&name, filter).await {
+        Ok(danmaku) => {
+            let n = danmaku.iter().filter(|c| !c.blocked).count();
+            *COMMENTS.lock().await = Some(danmaku);
+            if ENABLED.load(Ordering::SeqCst) {
+                unsafe { mpv_wakeup(CTX) };
+                loaded(n);
+            }
+        }
+        Err(error) => {
+            log_error(&error);
+            if ENABLED.load(Ordering::SeqCst) {
+                osd_message(&format!("Danmaku: {}", error));
+            }
+        }
+    }
+}
+
+async fn get_byurl (filter: Arc<Filter>, url: &str) {
+    match get_danmaku_byurl(url, filter).await {
         Ok(danmaku) => {
             let n = danmaku.iter().filter(|c| !c.blocked).count();
             *COMMENTS.lock().await = Some(danmaku);

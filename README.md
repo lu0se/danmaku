@@ -34,4 +34,5 @@ Set the following options in `script-opts/danmaku.conf` to configure the plugin:
 Available script messages:
 
 - `toggle-danmaku`: toggles the danmaku visibility.
+- `danmaku-url url`: get danmaku by video origin steam url(such as iqiyi,youku,bilibili)
 - `danmaku-delay <seconds>`: delays danmaku by &lt;seconds&gt; seconds, can be negative.
