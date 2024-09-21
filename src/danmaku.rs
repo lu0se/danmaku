@@ -1,7 +1,8 @@
+#![allow(unreachable_patterns)]
+#![allow(non_snake_case)]
+#![allow(dead_code)]
 use crate::options::Filter;
 use anyhow::{anyhow, Result};
-use hex::encode;
-use md5::{Digest, Md5};
 use reqwest::Client;
 use serde::{Deserialize, Deserializer};
 use serde::de::{self, Visitor, SeqAccess};
